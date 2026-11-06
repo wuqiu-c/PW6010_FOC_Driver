@@ -1,0 +1,6 @@
+# CMake/Ninja 构建产物
+/build/
+
+# 本机 CubeMX 元数据和本地预设
+/.mxproject
+/CMakeUserPresets.json

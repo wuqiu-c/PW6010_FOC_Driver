@@ -1,0 +1,84 @@
+{
+    // VS Code 任务入口。任务链：Build -> Configure；Flash with CMSIS-DAP -> Build -> Configure。
+    // 这里的 label 是任务标识，必须与 settings.json 的按钮 task、launch.json 的 preLaunchTask 对应。
+    // 本文件支持 JSONC 注释；复制到新工程时，先核对预设名、芯片配置和 ELF 文件名。
+    "version": "2.0.0",
+    "options": {
+        "env": {
+            "PATH": "D:/EnglishYingyong/stm32_Toolchain/ninja-win;D:/EnglishYingyong/stm32_Toolchain/arm-gnu-toolchain-13.3.rel1-mingw-w64-i686-arm-none-eabi/bin;${env:PATH}"
+        }
+    },
+    "tasks": [
+        {
+            // 配置：读取根目录 CMakePresets.json 的 Debug，生成 build/Debug 与 compile_commands.json。
+            // 工程换了路径后，旧 build/Debug 中的 CMakeCache.txt 不能直接沿用；需重新配置。
+            "label": "Configure",
+            "type": "process",
+            "command": "D:/EnglishYingyong/stm32_Toolchain/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+            "args": [
+                "--preset",
+                "Debug"
+            ],
+            // [] 表示不让 VS Code 用额外的编译错误匹配器；clangd 仍独立分析代码。
+            "problemMatcher": []
+        },
+        {
+            // 编译：使用 Debug 构建预设。dependsOn 确保先完成 Configure。
+            // 命令由 PATH 中的 cmake 调用 Ninja 和 arm-none-eabi 工具链。
+            "label": "Build",
+            "type": "process",
+            "command": "D:/EnglishYingyong/stm32_Toolchain/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+            "args": [
+                "--build",
+                "--preset",
+                "Debug",
+                "--parallel"
+            ],
+            "dependsOn": "Configure",
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            // Ctrl+Shift+B 默认执行本任务。
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            // 清理当前 Debug 构建产物，不删除源文件；若尚未配置，先运行 Configure。
+            "label": "Clean",
+            "type": "process",
+            "command": "D:/EnglishYingyong/stm32_Toolchain/cmake-4.4.3-windows-x86_64/bin/cmake.exe",
+            "args": [
+                "--build",
+                "--preset",
+                "Debug",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            // 烧录：OpenOCD + CMSIS-DAP + STM32G4。换调试器/芯片时修改两个 -f 配置。
+            // ELF 文件名来自 CMakeLists.txt 的 CMAKE_PROJECT_NAME；改工程名时同步此处。
+            // 使用相对路径，避免 Windows 绝对路径中的反斜杠被 OpenOCD/Tcl 错误解释。
+            "label": "Flash with CMSIS-DAP",
+            "type": "process",
+            "command": "D:/EnglishYingyong/stm32_Toolchain/openocd-20260302/bin/openocd.exe",
+            "args": [
+                "-f",
+                "interface/cmsis-dap.cfg",
+                "-f",
+                "target/stm32g4x.cfg",
+                "-c",
+                // 将 SWD 下载速度设为 400 kHz，降低连接时对接线质量的要求。
+                "adapter speed 400",
+                "-c",
+                "program build/Debug/My_Board_FOC.elf verify reset exit"
+            ],
+            // 必须与上面的 Build 标签完全相同；点击烧录时先配置并编译。
+            "dependsOn": "Build",
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        }
+    ]
+}

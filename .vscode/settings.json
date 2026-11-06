@@ -1,0 +1,48 @@
+{
+    // 本文件只影响当前工程。复制工程后，在 VS Code 中打开包含 CMakeLists.txt 的根目录。
+    // VS Code 的 settings.json 支持注释；普通严格 JSON 工具可能不接受注释。
+
+    // 此工程统一用 UTF-8 打开和保存源码、CMake 与文档。
+    // 关闭自动猜测，防止 UTF-8 中文注释被误判成 GBK 后保存为乱码。
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": false,
+
+    // 使用根目录 CMakePresets.json 中的 Debug 等预设，不让 CMake Tools 另选生成器/构建目录。
+    "cmake.useCMakePresets": "always",
+    // 打开工程时不自动配置；可通过底部“配置”按钮，或“编译/烧录”任务间接配置。
+    "cmake.configureOnOpen": false,
+
+    // clangd 从 CMake 生成的 compile_commands.json 读取真实编译参数、宏和头文件路径。
+    // 若把 Debug 构建目录改为别处，这里的目录也要同步；先成功运行一次 Configure。
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build/Debug",
+        "--background-index"
+    ],
+
+    // Task Buttons：底部状态栏的按钮。showCounter 控制插件的任务计数显示。
+    // 每个 task 必须与 tasks.json 里的 label 完全一致；label 只决定按钮文字和图标。
+    // 新工程通常只需改按钮名称；若重命名任务，两个文件要一起改。
+    "VsCodeTaskButtons.showCounter": true,
+    "VsCodeTaskButtons.tasks": [
+        {
+            "label": "$(wrench) Configure",
+            "task": "Configure",
+            "tooltip": "生成/更新 build/Debug 中的 CMake 构建文件"
+        },
+        {
+            "label": "$(trash) Clean Build",
+            "task": "Clean",
+            "tooltip": "清除当前 Debug 构建产物；首次使用前需先配置"
+        },
+        {
+            "label": "$(tools) Build",
+            "task": "Build",
+            "tooltip": "先配置，再编译 Debug 固件"
+        },
+        {
+            "label": "$(chip) Flash with CMSIS-DAP",
+            "task": "Flash with CMSIS-DAP",
+            "tooltip": "先编译，再通过 CMSIS-DAP 烧录并校验"
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    // F5 调试配置：先运行 Build，再用 Cortex-Debug 启动 OpenOCD 和 arm-none-eabi-gdb。
+    // 复制到新工程时核对 ELF 路径、调试器 interface、芯片 target 和预启动任务名。
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // 运行与调试面板显示的名称，可自行修改，不影响下面的任务引用。
+            "name": "STM32: Debug with CMSIS-DAP",
+            "type": "cortex-debug",
+            "request": "launch",
+            // 工程根目录；请用 VS Code 打开含 CMakeLists.txt 的目录。
+            "cwd": "${workspaceFolder}",
+            // 与 CMakePresets.json 的 build/Debug 和 CMakeLists.txt 的工程名对应。
+            // 改构建预设或工程名时，同步修改此路径。
+            "executable": "${workspaceFolder}/build/Debug/My_Board_FOC.elf",
+            "servertype": "openocd",
+            "serverpath": "D:/EnglishYingyong/stm32_Toolchain/openocd-20260302/bin/openocd.exe",
+            "armToolchainPath": "D:/EnglishYingyong/stm32_Toolchain/arm-gnu-toolchain-13.3.rel1-mingw-w64-i686-arm-none-eabi/bin",
+            "searchDir": ["D:/EnglishYingyong/stm32_Toolchain/openocd-20260302/share/openocd/scripts"],
+            "openOCDLaunchCommands": ["adapter speed 400"],
+            // 第一个是 CMSIS-DAP 调试器，第二个是 STM32G4 目标芯片；换硬件要重新核对。
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32g4x.cfg"
+            ],
+            // Cortex-Debug 据此寻找 arm-none-eabi-gdb；对应工具链需可用。
+            "toolchainPrefix": "arm-none-eabi",
+            // 下载并复位后停在 main；不需要时可删除此项。
+            "runToEntryPoint": "main",
+            // 必须与 tasks.json 的 Build 标签一致，F5 才会先配置和编译。
+            "preLaunchTask": "Build",
+            // 插件内部调试日志。排查 OpenOCD/GDB 启动问题时再调整输出级别。
+            "showDevDebugOutput": "none"
+        }
+    ]
+}
