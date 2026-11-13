@@ -26,6 +26,7 @@ extern Motor_Control_t motor_ctrl_system;
 
 void Motor_Ctrl_System_Init(Motor_Control_t* temp);
 void Motor_Ctrl_System_Updata(Motor_Control_t* temp);
+void Motor_Position_Control_Update(Motor_Control_t *temp, float target_angle);
 
 /**
  * @description 执行编码器零点对齐状态机

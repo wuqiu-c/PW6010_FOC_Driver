@@ -48,6 +48,10 @@ void MX_DMA_Init(void)
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 4, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
 
+    // RX DMA与USART3同为4级，保证两种接收事件不会互相抢占、重复搬运。
+    HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 4, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+
 }
 
 /* USER CODE BEGIN 2 */

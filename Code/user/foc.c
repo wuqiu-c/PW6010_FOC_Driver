@@ -197,4 +197,5 @@ void VF_Speed_Control_Update(VF_Speed_Control_t* temp,float* theta_output)
 
     /* 输出结果赋值*/
     *theta_output = temp->theta;
+
 }

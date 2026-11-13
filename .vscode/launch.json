@@ -30,7 +30,11 @@
             // 必须与 tasks.json 的 Build 标签一致，F5 才会先配置和编译。
             "preLaunchTask": "Build",
             // 插件内部调试日志。排查 OpenOCD/GDB 启动问题时再调整输出级别。
-            "showDevDebugOutput": "none"
+            "showDevDebugOutput": "none",
+            "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+            }
         }
     ]
 }

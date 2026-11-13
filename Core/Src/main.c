@@ -19,14 +19,15 @@ void SystemClock_Config(void);
  * @brief 新板FOC入口，默认只采样，等待串口运行命令
  * @parameter 无
  * @return 正常运行时不返回
- * @notes 1、!+e1#请求运行并对齐，!+e0#停止；2、!+s数值#设置目标转速，单位rpm。
+ * @notes 1、!+e1#请求运行并对齐，!+e0#停止；
+ *        2、!+a数值#按度设置单圈目标位置，360度等于0度，沿最短路径定位；
+ *        3、当前速度目标由位置环生成，!+s数值#仅保留接收，不参与三环控制。
  * @example 先观察电压与电流零偏，再发送!+e1#。
  */
 int main(void)
 {
     /* USER CODE BEGIN 1 */
     uint32_t last_send_ms = 0U;
-    uint32_t last_led_ms = 0U;
     /* USER CODE END 1 */
 
     HAL_Init();
@@ -43,7 +44,7 @@ int main(void)
     UART_FIFO_Init(&fifo);
     VOFA_Command_Init();
     Motor_Ctrl_System_Init(&motor_ctrl_system);
-    if (HAL_UART_Receive_IT(&huart3, &vofa_command_receive.rx_byte, 1U) != HAL_OK)
+    if (!VOFA_Receive_Start())
     {
         Error_Handler();
     }
@@ -62,12 +63,7 @@ int main(void)
             last_send_ms = HAL_GetTick();
             VOFA_Send_Farme(&vofa_jf_send, JFCH_COUNT);
         }
-        if ((HAL_GetTick() - last_led_ms) >= 500U)
-        {
-            last_led_ms = HAL_GetTick();
-            HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-        }
-        // LED2常亮表示PWM已使能，便于与单纯上电状态区分。
+        // LED1为ERROR灯，正常保持熄灭；LED2为RUN灯，PWM使能时常亮。
         HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin,
             motor_ctrl_system.pwm_enabled ? GPIO_PIN_RESET : GPIO_PIN_SET);
     }
@@ -120,7 +116,7 @@ void SystemClock_Config(void)
  * @brief 初始化或外设错误时关闭三相输出
  * @parameter 无
  * @return 不返回
- * @notes 1、先清MOE使六路PWM失效，再停止中断。
+ * @notes 1、先关闭PWM并停止中断；2、点亮ERROR灯并熄灭RUN灯。
  * @example HAL初始化失败时调用。
  */
 void Error_Handler(void)
@@ -128,6 +124,7 @@ void Error_Handler(void)
     /* USER CODE BEGIN Error_Handler_Debug */
     TIM1->BDTR &= ~TIM_BDTR_MOE;
     __disable_irq();
+    GPIO_ErrorIndicate();
     while (1)
     {
     }

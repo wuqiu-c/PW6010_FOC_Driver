@@ -11,6 +11,7 @@
 #define     JFCH_COUNT_TOTAL_BYTES              (JFCH_COUNT * sizeof(float) + 4U)   // dma发送缓冲区的字节数
 
 #define     COMMAND_VALUE_BUFFER_MAX_SIZE       20
+#define     VOFA_RX_DMA_BUFFER_SIZE             256U                                // 循环DMA接收缓冲区字节数
 
 /*============================== 结构体类型定义 ===============================*/
 typedef enum
@@ -33,7 +34,6 @@ typedef struct
 typedef struct
 {
     VOFA_Command_Prase_e prase_state;
-    uint8_t rx_byte;
     uint8_t command_type;
     char value_buffer[COMMAND_VALUE_BUFFER_MAX_SIZE];
     uint8_t value_buffer_index;
@@ -46,6 +46,7 @@ extern VOFA_Command_Receive_t vofa_command_receive;
 
 /*============================== 函数声明 ===============================*/
 void VOFA_Command_Init(void);
+bool VOFA_Receive_Start(void);
 bool VOFA_Send_Farme(JustFloat_TX_t* temp,uint8_t channel_count);
 void VOFA_Command_Process(void);
 

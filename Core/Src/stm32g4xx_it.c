@@ -18,10 +18,12 @@
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
+#include "foc.h"
 #include "main.h"
 #include "stm32g4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "gpio.h"
 #include "FSM.h"
 #include "motor_config.h"
 #include "motor_angle.h"
@@ -57,7 +59,7 @@ volatile uint16_t adc_debug_cnt3;         // FOC完成时TIM1计数，用于核�
 volatile uint16_t adc_debug_cnt2;         // JEOS回调入口时的TIM1计数值
 volatile uint32_t adc_debug_down;         // 1表示回调时向下计数
 volatile uint32_t adc_debug_jeos_count;   // 注入组完成次数
-
+volatile uint16_t uart_errorcode;        // 最近一次串口错误码，8表示ORE接收溢出
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -76,6 +78,7 @@ extern SPI_HandleTypeDef hspi1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim6;
 extern DMA_HandleTypeDef hdma_usart3_tx;
+extern DMA_HandleTypeDef hdma_usart3_rx;
 extern UART_HandleTypeDef huart3;
 /* USER CODE BEGIN EV */
 
@@ -91,6 +94,7 @@ void NMI_Handler(void)
 {
     TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
+    GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
@@ -107,6 +111,7 @@ void HardFault_Handler(void)
 {
     TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN HardFault_IRQn 0 */
+    GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
@@ -123,6 +128,7 @@ void MemManage_Handler(void)
 {
     TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
+    GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
@@ -139,6 +145,7 @@ void BusFault_Handler(void)
 {
     TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN BusFault_IRQn 0 */
+    GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
@@ -155,6 +162,7 @@ void UsageFault_Handler(void)
 {
     TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN UsageFault_IRQn 0 */
+    GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
@@ -239,6 +247,22 @@ void DMA1_Channel1_IRQHandler(void)
 }
 
 /**
+ * @brief 处理USART3接收DMA的半满、全满和错误中断
+ * @parameter 无
+ * @return 无
+ * @notes 1、通道2只用于USART3接收；2、数据搬运由HAL接收事件回调完成。
+ * @example DMA1通道2中断自动调用。
+ */
+void DMA1_Channel2_IRQHandler(void)
+{
+    /* USER CODE BEGIN DMA1_Channel2_IRQn 0 */
+    /* USER CODE END DMA1_Channel2_IRQn 0 */
+    HAL_DMA_IRQHandler(&hdma_usart3_rx);
+    /* USER CODE BEGIN DMA1_Channel2_IRQn 1 */
+    /* USER CODE END DMA1_Channel2_IRQn 1 */
+}
+
+/**
   * @brief This function handles ADC1 and ADC2 global interrupt.
   */
 void ADC1_2_IRQHandler(void)
@@ -311,7 +335,7 @@ void TIM6_DAC_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 float target_speed = 0;
-float target_pos = 0;
+float target_pos = 0;                      // 目标机械角度，单位rad，由串口度数指令转换得到
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance != ADC1 || !__HAL_ADC_GET_FLAG(hadc, ADC_FLAG_JEOS))
@@ -319,6 +343,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
         return;
     }
     static uint8_t speed_ctrl_div = 0;
+    static uint8_t pos_ctrl_div = 0;
     // 先记录定时器状态；这是整组转换完成时刻，不是ADC触发瞬间
     adc_debug_cnt2 = (uint16_t)TIM1->CNT;
     adc_debug_down = (TIM1->CR1 & TIM_CR1_DIR) != 0U;
@@ -327,21 +352,45 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
     Encoder_Updata(&motor_ctrl_system.encoder);
 
     // 先得到本拍平滑电角度，再计算共享的sin/cos，避免使用上一拍角度。
+    // if(motor_ctrl_system.pwm_enabled)
+    // {
+    //     VF_Speed_Control_Update(&(motor_ctrl_system.vf_speed_control), &(motor_ctrl_system.foc.theta));
+    // }
     motor_ctrl_system.foc.theta = Motor_Angle_Update(&motor_ctrl_system.encoder);
     motor_ctrl_system.foc.fast_sin_theta = sinf(motor_ctrl_system.foc.theta);
     motor_ctrl_system.foc.fast_cos_theta = cosf(motor_ctrl_system.foc.theta);
 
-    if ((++ speed_ctrl_div) >= ENCODER_SPEED_UPDATE_DIV)
+
+    // 测速始终按固定周期更新，校准期间由测速模块清除旧PLL状态。
+    speed_ctrl_div ++;
+    if (speed_ctrl_div >= ENCODER_SPEED_UPDATE_DIV)
     {
         speed_ctrl_div = 0U;
         Encoder_Speed_Updata(&motor_ctrl_system.encoder);
         if (motor_ctrl_system.pwm_enabled &&
             (motor_ctrl_system.encoder.encoder_calib_state == ENCODER_CALIBRATION_STATE_FINSH))
         {
+            // 位置环200Hz、速度环4kHz，位置环输出作为速度目标。
+            // pos_ctrl_div ++;
+            // if (pos_ctrl_div >= POS_CLC_DIV)
+            // {
+            //     pos_ctrl_div = 0U;
+            //     Motor_Position_Control_Update(&motor_ctrl_system, target_pos);
+            // }
+            // PID_Calc_Positional(&motor_ctrl_system.pid_speed, motor_ctrl_system.pid_pos.Output,
+            //     motor_ctrl_system.encoder.speed, ENCODER_SPEED_UPDATE_DT);
+
             PID_Calc_Positional(&motor_ctrl_system.pid_speed, target_speed,
                 motor_ctrl_system.encoder.speed, ENCODER_SPEED_UPDATE_DT);
+
+        }
+        else
+        {
+            // 停机和重新对齐时，从完整的位置环周期重新计数。
+            pos_ctrl_div = 0U;
         }
     }
+
     ADC_Current_Updata(&motor_ctrl_system.adc_detection);
     Motor_Ctrl_System_Updata(&motor_ctrl_system);
     adc_debug_cnt3 = (uint16_t)TIM1->CNT;
@@ -357,33 +406,24 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /**
- * @description USART3单字节接收完成回调
- * @parameter huart UART句柄
+ * @brief 保存串口错误并恢复循环DMA接收
+ * @parameter huart 串口句柄
  * @return 无
- * @notes 1、字节写入FIFO；2、立即启动下一字节接收。
- * @example HAL内部调用，无需手动调用。
+ * @notes 1、先保存错误码，避免中止接收时被清除；2、只有出错才重新启动DMA。
+ * @example HAL内部调用。
  */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance != USART3)
     {
         return;
     }
 
-    UART_FIFO_WriteByte(&fifo, vofa_command_receive.rx_byte);
-
-    HAL_UART_Receive_IT(&huart3, &vofa_command_receive.rx_byte, 1U);
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-	if(huart->Instance != USART3)
-	{
-		return;
-	}	
-
-	HAL_UART_AbortReceive(huart);
-
-	HAL_UART_Receive_IT(huart, &vofa_command_receive.rx_byte, 1U);
+    uart_errorcode = huart->ErrorCode;
+    HAL_UART_AbortReceive(huart);
+    if (!VOFA_Receive_Start())
+    {
+        Error_Handler();
+    }
 }
 /* USER CODE END 1 */

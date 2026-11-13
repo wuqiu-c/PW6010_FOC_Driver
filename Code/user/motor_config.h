@@ -8,16 +8,17 @@
 #define         DTOR                                    0.01745329f                                      // 角度转弧度系数 (PI / 180)
 
 /*============================== FOC运行参数 ===============================*/
+#define         POSITION_FULL_TURN_DEG                  360.0f                                           // 单圈位置指令的一圈角度，单位度
 #define         FOC_HZ                                  20000.0f                                         // FOC执行频率
 #define         FOC_DT                                  ((float)(1.0f / FOC_HZ))                         // FOC执行周期
-#define         POS_CLC_DIV                             20.0f                                            // 每5次ADC转换完成回调采集一次速度
-#define         POS_CLC_HZ                              (FOC_HZ /  POS_CLC_DIV)                          // 每20次ADC转换完成回调采集一次速度
-#define         POS_CLC_DT                              (1.0f / POS_CLC_HZ)                              // 每20次ADC转换完成回调采集一次速度
+#define         POS_CLC_DIV                             20U                                              // 每20次速度环更新执行一次位置环
+#define         POS_CLC_HZ                              (ENCODER_SPEED_UPDATE_HZ / POS_CLC_DIV)          // 位置环更新频率，单位Hz
+#define         POS_CLC_DT                              (1.0f / POS_CLC_HZ)                              // 位置环周期，单位s，当前为5ms
 
 /*============================== 硬件相关参数 ===============================*/
-#define         UDC                                     0.0f                                             // 初始母线电压，运行时使用ADC实测值
+#define         UDC                                     19.3f                                            // 初始母线电压，运行时使用ADC实测值
 #define         MOTOR_PWM_ARR                           4249U                                            // PWM定时器AAR自动重装值
-#define         POLE_PAIRS                              14.0f                                            // 暂沿用源工程14极对，接电机后重新核对
+#define         POLE_PAIRS                              14.0f                                            // 14极对
 
 /*============================== 编码器参数 ===============================*/
 #define         ENCODER_LINE                            16384                                            // 编码器分辨率，2^14计数/圈
@@ -27,6 +28,7 @@
 #define         ENCODER_SPEED_UPDATE_DIV                5.0f                                             // 每5次ADC转换完成回调采集一次速度
 #define         ENCODER_SPEED_UPDATE_HZ                 (FOC_HZ / ENCODER_SPEED_UPDATE_DIV)              // 编码器速度更新更新频率
 #define         ENCODER_SPEED_UPDATE_DT                 (1.0f / ENCODER_SPEED_UPDATE_HZ)                 // 固定测速周期，单位s
+
 #define         ENCODER_PLL_NATURAL_HZ                  80.0f                                            // PLL自然频率，单位Hz
 #define         ENCODER_PLL_DAMPING                     1.0f                                             // PLL阻尼比
 #define         ENCODER_ANGLE_PLL_NATURAL_HZ            20.0f                                            // 换相机械角PLL自然频率，单位Hz
@@ -38,11 +40,11 @@
 #define         ADC_CALIBRATION_COUNT                   1024.0f                                          // ADC零漂校准次数
 #define         PHASE_FILTER_WINDOWS                    3                                                // 相电流滑动窗口中值滤波窗口数
 
-/* ===============================================新板采样与调度参数======================================*/
+/* ===============================================ADC采样与调度参数======================================*/
 #define         ADC_REFERENCE_VOLTAGE                   3.3f                                             // ADC参考电压标称值，单位V
 #define         ADC_FULL_SCALE                          4096.0f                                          // 12位ADC量化分母
-#define         CURRENT_GAIN                            50.0f                                            // INA240A2固定增益，单位V/V
-#define         CURRENT_SHUNT_OHM                       0.001f                                           // R33、R34相电流采样电阻，单位Ω
+#define         CURRENT_GAIN                            50.0f                                            // 运放固定增益，单位V/V
+#define         CURRENT_SHUNT_OHM                       0.001f                                           // 相电流采样电阻，单位Ω
 #define         VBUS_UPPER_OHM                          (100000.0f + 5100.0f)                            // R48与R40串联，单位Ω
 #define         VBUS_LOWER_OHM                          10000.0f                                         // R41下拉电阻，单位Ω
 #define         VBUS_DIVIDER_RATIO                      ((VBUS_UPPER_OHM + VBUS_LOWER_OHM) / VBUS_LOWER_OHM) // 母线与ADC电压比11.51

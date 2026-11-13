@@ -7,6 +7,7 @@
 #include "pid.h"
 #include "stm32g4xx_hal_tim.h"
 #include "tim.h"
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -14,7 +15,7 @@
 Motor_Control_t motor_ctrl_system;          // 电机采样、控制器和启停状态
 float target_id = 0.0f;                     // 保留原工程上位机d轴调试目标，单位A
 float target_iq = 0.0f;                     // 保留原工程上位机q轴调试目标，单位A
-
+extern float target_speed;
 
 /**
  * @brief 初始化控制模块与新板采样
@@ -41,7 +42,7 @@ void Motor_Ctrl_System_Init(Motor_Control_t* temp)
     PID_Init(&motor_ctrl_system.pid_speed, 0.008f, 0.005f, 0, 1.5, 0.75);
     motor_ctrl_system.pid_speed.Output = 0;
     motor_ctrl_system.pid_speed.I_Term = 0;
-    PID_Init(&motor_ctrl_system.pid_pos, 3.0f, 0.0f, 0, 1000, 300);
+    PID_Init(&motor_ctrl_system.pid_pos, 100.0f, 0.0f, 0, 1000, 300);
     // 所有控制参数就绪后再启动ADC和触发定时器，避免中断读到半初始化状态。
     temp->run_request = false;
     temp->pwm_enabled = false;
@@ -73,6 +74,7 @@ void Motor_Ctrl_System_Updata(Motor_Control_t* temp)
             PID_Reset(&temp->pid_id);
             PID_Reset(&temp->pid_iq);
             PID_Reset(&temp->pid_speed);
+            PID_Reset(&temp->pid_pos);
         }
         return;
     }
@@ -102,15 +104,17 @@ void Motor_Ctrl_System_Updata(Motor_Control_t* temp)
             // 本拍换相角已在ADC回调更新，Park与反Park使用同一份三角函数。
             PID_Calc_Positional(&motor_ctrl_system.pid_id, 0.0f, motor_ctrl_system.adc_detection.adc_current.id,FOC_DT);
 
+            // 速度环输出作为q轴目标电流，单位A。
             PID_Calc_Positional(&motor_ctrl_system.pid_iq, motor_ctrl_system.pid_speed.Output, motor_ctrl_system.adc_detection.adc_current.iq,FOC_DT);
+            // 电流环
             // PID_Calc_Positional(&motor_ctrl_system.pid_iq, target_iq, motor_ctrl_system.adc_detection.adc_current.iq,FOC_DT);
 
             (temp->foc).vd = motor_ctrl_system.pid_id.Output;
             (temp->foc).vq = motor_ctrl_system.pid_iq.Output;
 
-            /* 开环测试*/
+            // /* 开环测试*/
             // (temp->foc).vd = 0.0f;
-            // (temp->foc).vq = 0.4f;
+            // (temp->foc).vq = 0.5f;
 
             break;
         }
@@ -125,6 +129,42 @@ void Motor_Ctrl_System_Updata(Motor_Control_t* temp)
 
     /* 电机设置PWM端电压*/
     Motor_Set_PWM(motor_ctrl_system.foc.tcmp1, motor_ctrl_system.foc.tcmp2, motor_ctrl_system.foc.tcmp3);
+}
+
+/**
+ * @brief 按最短路径计算单圈位置环
+ * @parameter temp 电机控制结构体；target_angle 目标机械角度，单位rad
+ * @return 无
+ * @notes 1、位置误差折返到[-pi, pi]，避免跨零点时继续绕圈；
+ *        2、使用目标附近的等效反馈角度，PID输出为目标转速，单位rpm。
+ * @example Motor_Position_Control_Update(&motor_ctrl_system, target_pos);
+ */
+void Motor_Position_Control_Update(Motor_Control_t *temp, float target_angle)
+{
+    float position_error;
+    float feedback_angle;
+
+    // 单圈目标允许输入负角度或超过一圈的角度，统一归一化。
+    target_angle = fmodf(target_angle, _2PI);
+    if (target_angle < 0.0f)
+    {
+        target_angle += _2PI;
+    }
+
+    // 例如目标0、反馈接近2pi时，误差应是很小的正角度。
+    position_error = target_angle - temp->encoder.theta_mechine;
+    if (position_error > _PI)
+    {
+        position_error -= _2PI;
+    }
+    else if (position_error < -_PI)
+    {
+        position_error += _2PI;
+    }
+
+    // 保留PID的目标角度含义，并让内部相减得到最短角度误差。
+    feedback_angle = target_angle - position_error;
+    PID_Calc_Positional(&temp->pid_pos, target_angle, feedback_angle, POS_CLC_DT);
 }
 
 /**

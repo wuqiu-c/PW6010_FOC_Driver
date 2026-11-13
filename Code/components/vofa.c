@@ -2,7 +2,9 @@
 #include "fifo.h"
 #include "usart.h"
 #include "FSM.h"
+#include "motor_config.h"
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -16,7 +18,11 @@ JustFloat_TX_t vofa_jf_send;
 UART_FIFO_t fifo;
 VOFA_Command_Receive_t vofa_command_receive;
 
+/* ===============================================静态变量定义======================================*/
+static uint8_t rx_dma_buffer[VOFA_RX_DMA_BUFFER_SIZE]; // DMA持续写入的接收缓冲区
+static uint16_t rx_dma_read_index;                    // 已搬入软件FIFO的接收位置
 
+/* ===============================================内部调用函数声明======================================*/
 static void VOFA_Command_Reset(void);
 static void VOFA_Command_Prase(uint8_t data);
 static void VOFA_Command_Apply(uint8_t command_type,float value);
@@ -34,6 +40,52 @@ void VOFA_Command_Init(void)
 }
 
 /**
+ * @brief 启动USART3循环DMA和空闲线接收
+ * @parameter 无
+ * @return true启动成功，false启动失败
+ * @notes 1、仅在初始化或接收出错后调用；2、保留半满与全满中断处理连续数据。
+ * @example VOFA_Receive_Start();
+ */
+bool VOFA_Receive_Start(void)
+{
+    // 错误恢复前由调用方中止旧DMA，新的接收从缓冲区起点开始。
+    rx_dma_read_index = 0U;
+    return HAL_UARTEx_ReceiveToIdle_DMA(&huart3, rx_dma_buffer,
+                                      VOFA_RX_DMA_BUFFER_SIZE) == HAL_OK;
+}
+
+/**
+ * @brief 将循环DMA新增字节搬入原有软件FIFO
+ * @parameter huart 串口句柄
+ * @parameter size HAL提供的事件位置，本函数使用实时DMA位置代替
+ * @return 无
+ * @notes 1、空闲、半满、全满事件均调用此函数，正常接收不停止DMA；
+ *        2、UART与RX DMA中断必须同级，保证FIFO只有一个写入者；
+ *        3、读取实时DMA位置，避免延迟到达的半满事件重复搬运旧数据。
+ * @example HAL内部调用。
+ */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
+{
+    uint16_t write_index;
+
+    (void)size;
+    if (huart->Instance != USART3)
+    {
+        return;
+    }
+
+    // 全满时DMA计数器可能为0或已重装，用取模统一为环形起点。
+    write_index = (VOFA_RX_DMA_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart->hdmarx))
+                  % VOFA_RX_DMA_BUFFER_SIZE;
+    while (rx_dma_read_index != write_index)
+    {
+        // FIFO满时沿用已有丢字节计数，协议解析仍在主循环执行。
+        UART_FIFO_WriteByte(&fifo, rx_dma_buffer[rx_dma_read_index]);
+        rx_dma_read_index = (rx_dma_read_index + 1U) % VOFA_RX_DMA_BUFFER_SIZE;
+    }
+}
+
+/**
  * @brief: 解析VOFA命令进程
  * @return {*} 无
  * @notes: fifo中有多少数据就处理多少,主循环调用
@@ -41,7 +93,7 @@ void VOFA_Command_Init(void)
  */
 void VOFA_Command_Process(void)
 {
-    uint8_t data;           // 注意区分vofa_command_receive.rx_byte,这是写入fifo的数据,我们重新储存读到的数据
+    uint8_t data;           // 从软件FIFO取出一字节，交给原有命令解析状态机
     // 用while保证完全读取fifo中的字节，只要fifo缓冲区未空
     while(VOFA_Command_ReadByte(&fifo, &data))
     {
@@ -58,6 +110,7 @@ void VOFA_Command_Process(void)
  * @notes: 
  * @example: 
  */
+extern volatile uint16_t uart_errorcode;
 bool VOFA_Send_Farme(JustFloat_TX_t* temp,uint8_t channel_data_count)
 {
     uint16_t channel_data_bytes;
@@ -80,24 +133,24 @@ bool VOFA_Send_Farme(JustFloat_TX_t* temp,uint8_t channel_data_count)
     channel_total_bytes = channel_data_bytes + 4U;                  // DMA缓冲区发送总字节数(+帧尾)
 
     /* 装载通道数据*/
-    temp->tx_data_buffer[0] = motor_ctrl_system.pid_speed.Target;
-    temp->tx_data_buffer[1] = motor_ctrl_system.pid_speed.Measure;
-    temp->tx_data_buffer[2] = motor_ctrl_system.pid_speed.Output;
-    temp->tx_data_buffer[3] = motor_ctrl_system.pid_speed.I_Term;
-    temp->tx_data_buffer[4] = motor_ctrl_system.pid_iq.Target;
-    temp->tx_data_buffer[5] = motor_ctrl_system.pid_iq.Measure;
-    temp->tx_data_buffer[6] = motor_ctrl_system.pid_iq.Output;
-    temp->tx_data_buffer[7] = motor_ctrl_system.pid_iq.I_Term;
+    temp->tx_data_buffer[0] = motor_ctrl_system.pid_pos.Target;
+    temp->tx_data_buffer[1] = motor_ctrl_system.pid_pos.Measure;
+    temp->tx_data_buffer[2] = motor_ctrl_system.pid_pos.Output;
+    temp->tx_data_buffer[3] = motor_ctrl_system.pid_pos.I_Term;
+    temp->tx_data_buffer[4] = motor_ctrl_system.pid_speed.Target;
+    temp->tx_data_buffer[5] = motor_ctrl_system.pid_speed.Measure;
+    temp->tx_data_buffer[6] = motor_ctrl_system.pid_speed.Output;
+    temp->tx_data_buffer[7] = motor_ctrl_system.pid_speed.I_Term;
     temp->tx_data_buffer[8] = motor_ctrl_system.adc_detection.adc_current.ia;
     temp->tx_data_buffer[9] = motor_ctrl_system.adc_detection.adc_current.ib;
     temp->tx_data_buffer[10] = motor_ctrl_system.adc_detection.adc_current.ic;
-    temp->tx_data_buffer[11] = motor_ctrl_system.foc.tcmp_max;
+    temp->tx_data_buffer[11] = fifo.overflow_count;
     temp->tx_data_buffer[12] = motor_ctrl_system.encoder.theta_electricity;
     temp->tx_data_buffer[13] = motor_ctrl_system.encoder.theta_mechine;
-    temp->tx_data_buffer[14] = motor_ctrl_system.encoder.raw_data;
+    temp->tx_data_buffer[14] = motor_ctrl_system.encoder.speed;
     temp->tx_data_buffer[15] = motor_ctrl_system.adc_detection.adc_voltage.vbus;             // 母线电压，单位V
-    temp->tx_data_buffer[16] = motor_ctrl_system.adc_detection.adc_bus_current.ibus;        // 母线回流电流，单位A
-    temp->tx_data_buffer[17] = motor_ctrl_system.adc_detection.adc_temperature.temperature; // 板上NTC温度，单位℃
+    temp->tx_data_buffer[16] = motor_ctrl_system.adc_detection.adc_bus_current.ibus;         // 母线回流电流，单位A
+    temp->tx_data_buffer[17] = motor_ctrl_system.adc_detection.adc_temperature.temperature;  // 板上NTC温度，单位℃
 
 
     /* 将数据通道数组和帧尾复制到DMA发送缓冲区中*/
@@ -119,7 +172,7 @@ bool VOFA_Send_Farme(JustFloat_TX_t* temp,uint8_t channel_data_count)
 extern float target_id;
 extern float target_iq;
 extern float target_speed;
-extern float target_pos;
+extern float target_pos;                  // 单圈目标机械角度，内部单位rad
 /**
  * @brief: 执行应用
  * @param {uint8_t} command_type
@@ -136,16 +189,16 @@ static void VOFA_Command_Apply(uint8_t command_type,float value)
             motor_ctrl_system.run_request = value > 0.5f; // !+e1#运行，!+e0#停止
             break;
         case 'P':
-            motor_ctrl_system.pid_speed.Kp = value;
-            break;
-        case 'I':
-            motor_ctrl_system.pid_speed.Ki = value;
-            break;
-        case 'p':
             motor_ctrl_system.pid_pos.Kp = value;
             break;
+        case 'I':
+            motor_ctrl_system.pid_pos.Ki = value;
+            break;
+        case 'p':
+            motor_ctrl_system.pid_speed.Kp = value;
+            break;
         case 'i':
-            motor_ctrl_system.pid_iq.Ki = value;
+            motor_ctrl_system.pid_speed.Ki = value;
             break;
         case 'x':
             target_id = value;
@@ -157,7 +210,8 @@ static void VOFA_Command_Apply(uint8_t command_type,float value)
             target_speed = value;
             break;
         case 'a':
-            target_pos = value;
+            // 串口按度数输入，先按360度回绕，再转换为控制环使用的弧度。
+            target_pos = fmodf(value, POSITION_FULL_TURN_DEG) * (_2PI / POSITION_FULL_TURN_DEG);
             break;
         default:
             break;
