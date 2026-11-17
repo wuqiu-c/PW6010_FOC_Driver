@@ -48,11 +48,14 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     "Code/components/vofa.c"
+    "Code/components/motor_can.c"
+    "Code/Hardware/can_bus.c"
     "Code/Hardware/driver_hardware.c"
     "Code/Hardware/encoder.c"
     "Code/Hardware/adc_detection.c"
     "Code/user/foc.c"
     "Code/user/motor_angle.c"
+    "Code/user/motor_mode.c"
     "Code/user/FSM.c"
     "Code/common/filter.c"
     "Code/common/pid.c"

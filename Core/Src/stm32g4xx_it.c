@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
-#include "foc.h"
 #include "main.h"
 #include "stm32g4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
@@ -27,6 +26,7 @@
 #include "FSM.h"
 #include "motor_config.h"
 #include "motor_angle.h"
+#include "motor_mode.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -74,6 +74,8 @@ volatile uint16_t uart_errorcode;        // 最近一次串口错误码，8表�
 
 /* External variables --------------------------------------------------------*/
 extern ADC_HandleTypeDef hadc1;
+extern ADC_HandleTypeDef hadc2;
+extern FDCAN_HandleTypeDef hfdcan1;
 extern SPI_HandleTypeDef hspi1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim6;
@@ -92,7 +94,6 @@ extern UART_HandleTypeDef huart3;
   */
 void NMI_Handler(void)
 {
-    TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
     GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
@@ -109,7 +110,6 @@ void NMI_Handler(void)
   */
 void HardFault_Handler(void)
 {
-    TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN HardFault_IRQn 0 */
     GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
@@ -126,7 +126,6 @@ void HardFault_Handler(void)
   */
 void MemManage_Handler(void)
 {
-    TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
     GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
@@ -143,7 +142,6 @@ void MemManage_Handler(void)
   */
 void BusFault_Handler(void)
 {
-    TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN BusFault_IRQn 0 */
     GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
@@ -160,7 +158,6 @@ void BusFault_Handler(void)
   */
 void UsageFault_Handler(void)
 {
-    TIM1->BDTR &= ~TIM_BDTR_MOE; // 异常时立即关闭三相输出
   /* USER CODE BEGIN UsageFault_IRQn 0 */
     GPIO_ErrorIndicate(); // ERROR常亮、RUN熄灭
 
@@ -247,19 +244,15 @@ void DMA1_Channel1_IRQHandler(void)
 }
 
 /**
- * @brief 处理USART3接收DMA的半满、全满和错误中断
- * @parameter 无
- * @return 无
- * @notes 1、通道2只用于USART3接收；2、数据搬运由HAL接收事件回调完成。
- * @example DMA1通道2中断自动调用。
- */
+  * @brief This function handles DMA1 channel2 global interrupt.
+  */
 void DMA1_Channel2_IRQHandler(void)
 {
-    /* USER CODE BEGIN DMA1_Channel2_IRQn 0 */
-    /* USER CODE END DMA1_Channel2_IRQn 0 */
-    HAL_DMA_IRQHandler(&hdma_usart3_rx);
-    /* USER CODE BEGIN DMA1_Channel2_IRQn 1 */
-    /* USER CODE END DMA1_Channel2_IRQn 1 */
+  /* USER CODE BEGIN DMA1_Channel2_IRQn 0 */
+  /* USER CODE END DMA1_Channel2_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_usart3_rx);
+  /* USER CODE BEGIN DMA1_Channel2_IRQn 1 */
+  /* USER CODE END DMA1_Channel2_IRQn 1 */
 }
 
 /**
@@ -271,9 +264,24 @@ void ADC1_2_IRQHandler(void)
 
   /* USER CODE END ADC1_2_IRQn 0 */
   HAL_ADC_IRQHandler(&hadc1);
+  HAL_ADC_IRQHandler(&hadc2);
   /* USER CODE BEGIN ADC1_2_IRQn 1 */
 
   /* USER CODE END ADC1_2_IRQn 1 */
+}
+
+/**
+  * @brief This function handles FDCAN1 interrupt 0.
+  */
+void FDCAN1_IT0_IRQHandler(void)
+{
+  /* USER CODE BEGIN FDCAN1_IT0_IRQn 0 */
+
+  /* USER CODE END FDCAN1_IT0_IRQn 0 */
+  HAL_FDCAN_IRQHandler(&hfdcan1);
+  /* USER CODE BEGIN FDCAN1_IT0_IRQn 1 */
+
+  /* USER CODE END FDCAN1_IT0_IRQn 1 */
 }
 
 /**
@@ -334,8 +342,13 @@ void TIM6_DAC_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-float target_speed = 0;
-float target_pos = 0;                      // 目标机械角度，单位rad，由串口度数指令转换得到
+/**
+ * @brief 采集反馈并按固定节拍执行电机控制
+ * @parameter hadc ADC句柄
+ * @return 无
+ * @notes 1、速度环4kHz、位置环200Hz、电流环20kHz；2、通信解析不在中断中执行。
+ * @example ADC1注入组转换完成后由HAL调用。
+ */
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance != ADC1 || !__HAL_ADC_GET_FLAG(hadc, ADC_FLAG_JEOS))
@@ -343,7 +356,6 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
         return;
     }
     static uint8_t speed_ctrl_div = 0;
-    static uint8_t pos_ctrl_div = 0;
     // 先记录定时器状态；这是整组转换完成时刻，不是ADC触发瞬间
     adc_debug_cnt2 = (uint16_t)TIM1->CNT;
     adc_debug_down = (TIM1->CR1 & TIM_CR1_DIR) != 0U;
@@ -367,28 +379,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
     {
         speed_ctrl_div = 0U;
         Encoder_Speed_Updata(&motor_ctrl_system.encoder);
-        if (motor_ctrl_system.pwm_enabled &&
-            (motor_ctrl_system.encoder.encoder_calib_state == ENCODER_CALIBRATION_STATE_FINSH))
-        {
-            // 位置环200Hz、速度环4kHz，位置环输出作为速度目标。
-            // pos_ctrl_div ++;
-            // if (pos_ctrl_div >= POS_CLC_DIV)
-            // {
-            //     pos_ctrl_div = 0U;
-            //     Motor_Position_Control_Update(&motor_ctrl_system, target_pos);
-            // }
-            // PID_Calc_Positional(&motor_ctrl_system.pid_speed, motor_ctrl_system.pid_pos.Output,
-            //     motor_ctrl_system.encoder.speed, ENCODER_SPEED_UPDATE_DT);
-
-            PID_Calc_Positional(&motor_ctrl_system.pid_speed, target_speed,
-                motor_ctrl_system.encoder.speed, ENCODER_SPEED_UPDATE_DT);
-
-        }
-        else
-        {
-            // 停机和重新对齐时，从完整的位置环周期重新计数。
-            pos_ctrl_div = 0U;
-        }
+        Motor_Mode_Update(&motor_ctrl_system);
     }
 
     ADC_Current_Updata(&motor_ctrl_system.adc_detection);

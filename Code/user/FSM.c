@@ -4,6 +4,7 @@
 #include "driver_hardware.h"
 #include "motor_config.h"
 #include "motor_angle.h"
+#include "motor_mode.h"
 #include "pid.h"
 #include "stm32g4xx_hal_tim.h"
 #include "tim.h"
@@ -15,7 +16,6 @@
 Motor_Control_t motor_ctrl_system;          // 电机采样、控制器和启停状态
 float target_id = 0.0f;                     // 保留原工程上位机d轴调试目标，单位A
 float target_iq = 0.0f;                     // 保留原工程上位机q轴调试目标，单位A
-extern float target_speed;
 
 /**
  * @brief 初始化控制模块与新板采样
@@ -42,7 +42,8 @@ void Motor_Ctrl_System_Init(Motor_Control_t* temp)
     PID_Init(&motor_ctrl_system.pid_speed, 0.008f, 0.005f, 0, 1.5, 0.75);
     motor_ctrl_system.pid_speed.Output = 0;
     motor_ctrl_system.pid_speed.I_Term = 0;
-    PID_Init(&motor_ctrl_system.pid_pos, 100.0f, 0.0f, 0, 1000, 300);
+    PID_Init(&motor_ctrl_system.pid_pos, 100.0f, 0.0f, 0, MOTOR_SPEED_MAX_RPM, 300);
+    Motor_Mode_Init(temp);
     // 所有控制参数就绪后再启动ADC和触发定时器，避免中断读到半初始化状态。
     temp->run_request = false;
     temp->pwm_enabled = false;
@@ -62,7 +63,7 @@ void Motor_Ctrl_System_Updata(Motor_Control_t* temp)
 {
     // 新板上电先测量，只有收到运行请求且零偏、电压就绪后才输出PWM。
     temp->foc.Udc = temp->adc_detection.adc_voltage.vbus;
-    if (!temp->run_request || !temp->adc_detection.adc_voltage.valid ||
+    if (!temp->run_request || (temp->fault_code != MOTOR_FAULT_NONE) || !temp->adc_detection.adc_voltage.valid ||
         (temp->foc.Udc <= VBUS_MIN_VALID_V) || !temp->adc_detection.adc_bus_current.zero_valid ||
         (temp->adc_detection.adc_current.aec_zerooffest_cali_state != ADC_ZEROOFEST_CALIBRATION_FINSH))
     {
@@ -214,7 +215,12 @@ void Encoder_Offest_Calibration(Encoder_t *encoder_temp)
             // 只读取一次，避免两个零点分别使用中断更新前后的不同样本
             align_count = encoder_temp->raw_data;
             encoder_temp->zero_offest = - _2PI * align_count / encoder_temp->line;
-            encoder_temp->mechanical_zero = align_count;
+            // 电角度每次启动都重新对齐，机械坐标只在首次对齐时建立，保留用户设零。
+            if (!encoder_temp->mechanical_zero_valid)
+            {
+                encoder_temp->mechanical_zero = align_count;
+                encoder_temp->mechanical_zero_valid = true;
+            }
             encoder_temp->encoder_calib_state = ENCODER_CALIBRATION_STATE_FINSH;
             break;
 

@@ -37,6 +37,7 @@ float Motor_Angle_Update(const Encoder_t *encoder)
     bool sample_valid;
     float predicted_angle;
     float error;
+    float electrical_angle;
 
     sample_valid = encoder->sample_count != angle_sample_count;
     angle_sample_count = encoder->sample_count;
@@ -82,7 +83,16 @@ float Motor_Angle_Update(const Encoder_t *encoder)
         motor_angle_pll.phase_error = error;
     }
 
-    return fmodf(motor_angle_pll.angle * POLE_PAIRS, _2PI);
+    // PLL跟踪机械坐标；换相时补回机械零点，再应用电角度对齐零偏。
+    // 因此CAN设零和重新对齐都不会把用户位置零点误当作换相零点。
+    electrical_angle = (motor_angle_pll.angle +
+        encoder->mechanical_zero * (_2PI / (float)encoder->line) + encoder->zero_offest) * POLE_PAIRS;
+    electrical_angle = fmodf(electrical_angle, _2PI);
+    if (electrical_angle < 0.0f)
+    {
+        electrical_angle += _2PI;
+    }
+    return electrical_angle;
 }
 
 /* ===============================================内部函数定义======================================*/

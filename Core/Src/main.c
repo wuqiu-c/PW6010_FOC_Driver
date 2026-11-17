@@ -1,46 +1,109 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
-#include "gpio.h"
+#include "fdcan.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "FSM.h"
 #include "motor_config.h"
 #include "vofa.h"
+#include "motor_can.h"
 /* USER CODE END Includes */
 
-/* ===============================================内部调用函数声明======================================*/
-void SystemClock_Config(void);
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
 
-/* ===============================================外部函数定义======================================*/
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
 /**
- * @brief 新板FOC入口，默认只采样，等待串口运行命令
- * @parameter 无
- * @return 正常运行时不返回
- * @notes 1、!+e1#请求运行并对齐，!+e0#停止；
- *        2、!+a数值#按度设置单圈目标位置，360度等于0度，沿最短路径定位；
- *        3、当前速度目标由位置环生成，!+s数值#仅保留接收，不参与三环控制。
- * @example 先观察电压与电流零偏，再发送!+e1#。
- */
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
-    /* USER CODE BEGIN 1 */
+
+  /* USER CODE BEGIN 1 */
     uint32_t last_send_ms = 0U;
-    /* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-    HAL_Init();
-    SystemClock_Config();
-    MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_SPI1_Init();
-    MX_TIM1_Init();
-    MX_USART3_UART_Init();
-    MX_ADC1_Init();
-    MX_ADC2_Init();
+  /* MCU Configuration--------------------------------------------------------*/
 
-    /* USER CODE BEGIN 2 */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_SPI1_Init();
+  MX_TIM1_Init();
+  MX_USART3_UART_Init();
+  MX_ADC1_Init();
+  MX_ADC2_Init();
+  MX_TIM6_Init();
+  MX_FDCAN1_Init();
+  /* USER CODE BEGIN 2 */
     UART_FIFO_Init(&fifo);
     VOFA_Command_Init();
     Motor_Ctrl_System_Init(&motor_ctrl_system);
@@ -48,85 +111,116 @@ int main(void)
     {
         Error_Handler();
     }
+    if (!Motor_Can_Init())
+    {
+        Error_Handler();
+    }
 
-    /* USER CODE END 2 */
-    /* USER CODE BEGIN WHILE */
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
     while (1)
     {
-        /* USER CODE END WHILE */
-        /* USER CODE BEGIN 3 */
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
         ADC_Slow_Updata(&motor_ctrl_system.adc_detection);
         VOFA_Command_Process();
+        Motor_Can_Process();
         Encoder_Offest_Calibration(&motor_ctrl_system.encoder);
         if ((HAL_GetTick() - last_send_ms) >= VOFA_SEND_PERIOD_MS)
         {
             last_send_ms = HAL_GetTick();
             VOFA_Send_Farme(&vofa_jf_send, JFCH_COUNT);
         }
-        // LED1为ERROR灯，正常保持熄灭；LED2为RUN灯，PWM使能时常亮。
+        // 通信故障也驱动ERROR灯；处理器异常仍由GPIO_ErrorIndicate锁定指示。
+        HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin,
+            motor_ctrl_system.fault_code == MOTOR_FAULT_NONE ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin,
             motor_ctrl_system.pwm_enabled ? GPIO_PIN_RESET : GPIO_PIN_SET);
     }
-    /* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
 
 /**
- * @brief 配置外部8MHz晶体与170MHz系统时钟
- * @parameter 无
- * @return 无
- * @notes 1、PLL采用8MHz / 2 * 85 / 2；2、APB1与APB2均不分频。
- * @example SystemClock_Config();
- */
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
-    RCC_OscInitTypeDef rcc_osc_init = {0};
-    RCC_ClkInitTypeDef rcc_clk_init = {0};
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+  /** Configure the main internal regulator output voltage
+  */
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
-    // 外部 8MHz 无源晶体提供时钟，使用原来的 PLL 倍频配置。
-    rcc_osc_init.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-    rcc_osc_init.HSEState = RCC_HSE_ON;
-    rcc_osc_init.PLL.PLLState = RCC_PLL_ON;
-    rcc_osc_init.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    rcc_osc_init.PLL.PLLM = RCC_PLLM_DIV2;
-    rcc_osc_init.PLL.PLLN = 85;
-    rcc_osc_init.PLL.PLLP = RCC_PLLP_DIV2;
-    rcc_osc_init.PLL.PLLQ = RCC_PLLQ_DIV2;
-    rcc_osc_init.PLL.PLLR = RCC_PLLR_DIV2;
-    if (HAL_RCC_OscConfig(&rcc_osc_init) != HAL_OK)
-    {
-        Error_Handler();
-    }
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
-    // 系统、AHB、APB1 和 APB2 均为 170MHz，HAL 会同步更新 SysTick。
-    rcc_clk_init.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                            | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-    rcc_clk_init.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    rcc_clk_init.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    rcc_clk_init.APB1CLKDivider = RCC_HCLK_DIV1;
-    rcc_clk_init.APB2CLKDivider = RCC_HCLK_DIV1;
-    if (HAL_RCC_ClockConfig(&rcc_clk_init, FLASH_LATENCY_4) != HAL_OK)
-    {
-        Error_Handler();
-    }
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
 /**
- * @brief 初始化或外设错误时关闭三相输出
- * @parameter 无
- * @return 不返回
- * @notes 1、先关闭PWM并停止中断；2、点亮ERROR灯并熄灭RUN灯。
- * @example HAL初始化失败时调用。
- */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
-    /* USER CODE BEGIN Error_Handler_Debug */
+  /* USER CODE BEGIN Error_Handler_Debug */
     TIM1->BDTR &= ~TIM_BDTR_MOE;
     __disable_irq();
     GPIO_ErrorIndicate();
     while (1)
     {
     }
-    /* USER CODE END Error_Handler_Debug */
+  /* USER CODE END Error_Handler_Debug */
 }
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

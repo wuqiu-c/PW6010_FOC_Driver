@@ -126,7 +126,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     __HAL_LINKDMA(uartHandle,hdmatx,hdma_usart3_tx);
 
-    // RX独占通道2，循环写入内存，不再依赖逐字节接收中断。
+    /* USART3_RX Init */
     hdma_usart3_rx.Instance = DMA1_Channel2;
     hdma_usart3_rx.Init.Request = DMA_REQUEST_USART3_RX;
     hdma_usart3_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
@@ -138,9 +138,10 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_usart3_rx.Init.Priority = DMA_PRIORITY_HIGH;
     if (HAL_DMA_Init(&hdma_usart3_rx) != HAL_OK)
     {
-        Error_Handler();
+      Error_Handler();
     }
-    __HAL_LINKDMA(uartHandle, hdmarx, hdma_usart3_rx);
+
+    __HAL_LINKDMA(uartHandle,hdmarx,hdma_usart3_rx);
 
     /* USART3 interrupt Init */
     HAL_NVIC_SetPriority(USART3_IRQn, 4, 0);

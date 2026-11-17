@@ -11,9 +11,17 @@
 #define         POSITION_FULL_TURN_DEG                  360.0f                                           // 单圈位置指令的一圈角度，单位度
 #define         FOC_HZ                                  20000.0f                                         // FOC执行频率
 #define         FOC_DT                                  ((float)(1.0f / FOC_HZ))                         // FOC执行周期
+#define         MOTOR_SPEED_MAX_RPM                     1000.0f                                          // 速度指令和位置环输出的转速幅值上限，单位rpm
 #define         POS_CLC_DIV                             20U                                              // 每20次速度环更新执行一次位置环
 #define         POS_CLC_HZ                              (ENCODER_SPEED_UPDATE_HZ / POS_CLC_DIV)          // 位置环更新频率，单位Hz
 #define         POS_CLC_DT                              (1.0f / POS_CLC_HZ)                              // 位置环周期，单位s，当前为5ms
+
+/* ===============================================CAN通信参数======================================*/
+#define         MOTOR_CAN_NODE_ID                       1U                                               // 本机节点ID，范围1至255
+#define         MOTOR_CAN_TIMEOUT_MS                    500U                                             // 运行请求有效时，CAN控制指令超时停机，单位ms
+#define         MOTOR_CAN_FEEDBACK_PERIOD_MS            10U                                              // 自定义状态帧回传周期，单位ms
+#define         MOTOR_CAN_RAD_S_TO_RPM                  (60.0f / _2PI)                                   // CAN速度rad/s转控制环rpm
+#define         MOTOR_CAN_RPM_TO_RAD_S                  (_2PI / 60.0f)                                   // 控制环rpm转CAN速度rad/s
 
 /*============================== 硬件相关参数 ===============================*/
 #define         UDC                                     19.3f                                            // 初始母线电压，运行时使用ADC实测值
